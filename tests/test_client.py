@@ -67,3 +67,15 @@ def test_invalid_license_error(client):
     
     with pytest.raises(InvalidLicenseError):
         client.verify(license_key="TEST-KEY")
+
+@responses.activate
+def test_deactivate(client):
+    responses.add(
+        responses.POST,
+        "https://api.test/functions/v1/deactivate-license",
+        json={"success": True},
+        status=200
+    )
+    
+    res = client.deactivate(license_key="TEST-KEY")
+    assert res["success"] is True

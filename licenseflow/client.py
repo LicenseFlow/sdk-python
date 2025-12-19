@@ -94,6 +94,24 @@ class LicenseFlowClient:
         except requests.exceptions.RequestException as e:
             raise NetworkError(str(e))
 
+    def deactivate(self, license_key, device_id=None):
+        """Deactivate a license for this device."""
+        if not device_id:
+            device_id = self.get_hardware_id()
+            
+        payload = {
+            "license_key": license_key,
+            "device_id": device_id
+        }
+        
+        try:
+            response = self.session.post(f"{self.api_url}/functions/v1/deactivate-license", json=payload)
+            self._handle_response_errors(response)
+            self.clear_cache()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise NetworkError(str(e))
+
     def validate_proof_offline(self, proof, secret=None):
         """Validate a signed proof token offline."""
         key = secret or self.jwt_secret
