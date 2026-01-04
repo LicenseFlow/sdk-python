@@ -139,11 +139,19 @@ class LicenseFlowClient:
         if response.status_code == 200:
             return
             
+        # Clear cache on any error to be safe
+        self.cache.clear()
+            
+        message = None
         try:
             data = response.json()
-            message = data.get("message") or data.get("error") or response.text
+            if isinstance(data, dict):
+                message = data.get("message") or data.get("error") or data.get("msg")
         except Exception:
-            message = response.text
+            pass
+            
+        if not message:
+            message = response.text or f"HTTP {response.status_code}"
             
         if response.status_code == 429:
             raise RateLimitError(message)
@@ -153,8 +161,6 @@ class LicenseFlowClient:
             raise NetworkError(message)
         else:
             raise LicenseFlowError(message, status=response.status_code)
-
-        self.cache.clear()
 
     def has_feature(self, verification, feature_code):
         """
