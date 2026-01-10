@@ -35,7 +35,7 @@ class LicenseFlowClient:
         except Exception:
             return socket.gethostname()
 
-    def activate(self, license_key, device_id=None, device_name=None, hardware_fingerprint=None, is_test=False):
+    def activate(self, license_key, device_id=None, device_name=None, hardware_fingerprint=None, is_test=False, environment_id=None):
         """Activate a license for this device."""
         if not device_id:
             device_id = self.get_hardware_id()
@@ -45,7 +45,8 @@ class LicenseFlowClient:
             "device_id": device_id,
             "device_name": device_name or socket.gethostname(),
             "hardware_fingerprint": hardware_fingerprint,
-            "is_test": is_test
+            "is_test": is_test,
+            "environment_id": environment_id
         }
         
         try:
@@ -55,18 +56,19 @@ class LicenseFlowClient:
         except requests.exceptions.RequestException as e:
             raise NetworkError(str(e))
 
-    def verify(self, license_key, device_id=None):
+    def verify(self, license_key, device_id=None, environment_id=None):
         """Verify the license status, using cache if available."""
         if not device_id:
             device_id = self.get_hardware_id()
             
-        cache_key = f"verify:{license_key}:{device_id}"
+        cache_key = f"verify:{license_key}:{device_id}:{environment_id or 'default'}"
         if cache_key in self.cache:
             return self.cache[cache_key]
             
         payload = {
-            "license_key": license_key,
-            "device_id": device_id
+            "licenseKey": license_key,
+            "deviceId": device_id,
+            "environmentId": environment_id
         }
         
         try:
@@ -81,14 +83,15 @@ class LicenseFlowClient:
         except requests.exceptions.RequestException as e:
             raise NetworkError(str(e))
 
-    def record_usage(self, license_key, metric_name, value, increment=False, is_test=False):
+    def record_usage(self, license_key, metric_name, value, increment=False, is_test=False, environment_id=None):
         """Record usage metrics for a license."""
         payload = {
             "license_key": license_key,
             "metric_name": metric_name,
             "value": value,
             "increment": increment,
-            "is_test": is_test
+            "is_test": is_test,
+            "environment_id": environment_id
         }
         
         try:
@@ -98,14 +101,15 @@ class LicenseFlowClient:
         except requests.exceptions.RequestException as e:
             raise NetworkError(str(e))
 
-    def deactivate(self, license_key, device_id=None):
+    def deactivate(self, license_key, device_id=None, environment_id=None):
         """Deactivate a license for this device."""
         if not device_id:
             device_id = self.get_hardware_id()
             
         payload = {
             "license_key": license_key,
-            "device_id": device_id
+            "device_id": device_id,
+            "environment_id": environment_id
         }
         
         try:
