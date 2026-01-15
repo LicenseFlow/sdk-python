@@ -19,6 +19,7 @@ class LicenseFlowClient:
         self.session = requests.Session()
         self.session.headers.update({
             'x-api-key': api_key,
+            'Authorization': f'Bearer {api_key}',
             'Content-Type': 'application/json'
         })
         
