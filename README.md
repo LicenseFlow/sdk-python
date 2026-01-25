@@ -54,6 +54,71 @@ except Exception as e:
 - **Fault Tolerance**: Automatic retries for network-level failures.
 - **Offline Proofs**: Validate signed JWT proofs offline.
 
+
+## Phase 5: Entitlements
+
+Check feature access based on license tier:
+
+```python
+# Check boolean feature
+if client.has_feature(verification, 'ai_features'):
+    enable_ai()
+
+# Check numeric limit
+limit = client.get_entitlement(verification, 'api_rate_limit')
+print(f"Your rate limit: {limit.get('limit', 1000)} requests/hour")
+```
+
+## Phase 5: Release Management
+
+Check for updates and download new versions:
+
+```python
+# Check for updates
+update = client.check_for_updates(
+    current_version='v1.5.0',
+    product_id='your-product-id',
+    channel='stable' # or 'beta', 'alpha'
+)
+
+if update:
+    print(f"New version available: {update['version']}")
+    
+    # Download with license
+    download = client.download_artifact(
+        license_key='XXXX-XXXX',
+        release_id=update['id'],
+        platform='win32', # or 'darwin', 'linux'
+        architecture='x64'
+    )
+    
+    print(f"Download URL: {download['url']}")
+```
+
+## Phase 5: Offline Licensing
+
+Verify licenses without internet access using Ed25519 signatures:
+
+```python
+import json
+
+# Load license file content
+with open('license.lic', 'r') as f:
+    lic_file_content = f.read()
+
+public_key = 'YOUR_ORG_PUBLIC_KEY_HEX'
+
+try:
+    license_data = client.verify_offline_license(lic_file_content, public_key)
+    
+    print('Offline license valid!')
+    print(f"Customer: {license_data.get('customer_name')}")
+    print(f"Valid until: {license_data.get('valid_until')}")
+    
+except Exception as e:
+    print(f"Invalid offline license: {e}")
+```
+
 ## License
 
 MIT
