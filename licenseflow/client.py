@@ -194,37 +194,81 @@ class LicenseFlowClient:
         return verification['entitlements'].get(feature_code)
 
     def check_for_updates(self, current_version, product_id, channel='stable'):
-        """
-        Phase 5: Check for software updates
-        """
-        response = self.session.get(
-            f'{self.api_url}/functions/v1/release-management/latest',
-            params={
-                'product_id': product_id,
-                'channel': channel
+        """Check for software updates."""
+        try:
+            response = self.session.get(
+                f'{self.api_url}/functions/v1/release-management/latest',
+                params={
+                    'product_id': product_id,
+                    'channel': channel
+                }
+            )
+            
+            # Handle 404 before error handler — no update available
+            if response.status_code == 404:
+                return None
+            
+            self._handle_response_errors(response)
+            
+            try:
+                data = response.json()
+            except ValueError:
+                return None
+
+            if not data or data.get('version') == current_version:
+                return None
+            
+            return {
+                'id': data['id'],
+                'version': data['version'],
+                'changelog': data.get('changelog'),
+                'published_at': data['published_at']
             }
-        )
-        self._handle_response_errors(response)
-        
-        # requests.Response.json() might raise if empty, check status first
-        # _handle_response_errors checks status, but 404 might raise InvalidLicenseError which we might catch
-        # Actually 404 means no update usually? No, endpoint returns 200 with data or null.
-        # If product not found, it might 404.
+        except requests.exceptions.RequestException as e:
+            raise NetworkError(str(e))
+
+    def checkout_license(self, license_key, duration_seconds=3600, requester_id=None, requester_type='ci', metadata=None):
+        """Acquire a temporary floating license lease."""
+        payload = {
+            "license_key": license_key,
+            "duration_seconds": duration_seconds,
+            "requester_id": requester_id or self.get_hardware_id(),
+            "requester_type": requester_type,
+        }
+        if metadata:
+            payload["metadata"] = metadata
         
         try:
-            data = response.json()
-        except ValueError:
-            return None
+            response = self.session.post(f"{self.api_url}/functions/v1/checkout-license", json=payload)
+            self._handle_response_errors(response)
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise NetworkError(str(e))
 
-        if not data or data.get('version') == current_version:
-            return None
+    def checkin_license(self, lease_key):
+        """Release a floating license lease early."""
+        payload = {"lease_key": lease_key}
         
-        return {
-            'id': data['id'],
-            'version': data['version'],
-            'changelog': data.get('changelog'),
-            'published_at': data['published_at']
-        }
+        try:
+            response = self.session.post(f"{self.api_url}/functions/v1/checkin-license", json=payload)
+            self._handle_response_errors(response)
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise NetworkError(str(e))
+
+    def get_lease_status(self, lease_key):
+        """Check the status and remaining time of a lease."""
+        try:
+            response = self.session.get(
+                f"{self.api_url}/functions/v1/lease-status",
+                params={"lease_key": lease_key}
+            )
+            if response.status_code == 404:
+                return None
+            self._handle_response_errors(response)
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise NetworkError(str(e))
 
     def download_artifact(self, license_key, release_id=None, artifact_id=None, platform=None, architecture=None):
         """
