@@ -1,6 +1,8 @@
-# licenseflow-python
+# LicenseFlow Python SDK
 
-Official Python SDK for LicenseFlow.
+**Stop Building Licensing Infrastructure. Start Shipping Software.**
+
+The official Python SDK for LicenseFlow. Protect your intellectual property, enforce entitlements, and manage software distribution with enterprise-grade security.
 
 ## Installation
 
