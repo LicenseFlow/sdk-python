@@ -16,7 +16,7 @@ pip install licenseflow-python
 from licenseflow import LicenseFlowClient, RateLimitError, InvalidLicenseError
 
 client = LicenseFlowClient(
-    api_url='https://your-project.supabase.co',
+    api_url='https://api.licenseflow.dev/v1',
     api_key='lf_live_xxxxxxxxxxxx', # Generated from the SaaS platform
     jwt_secret='your-jwt-secret'    # Required for offline validation
 )
