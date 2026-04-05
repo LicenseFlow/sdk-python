@@ -270,6 +270,114 @@ class LicenseFlowClient:
         except requests.exceptions.RequestException as e:
             raise NetworkError(str(e))
 
+    # ── Credits / Usage-Based Billing ──
+
+    def consume_credits(self, amount, description=None, product_id=None, currency='credits', reference_id=None, reference_type=None, metadata=None):
+        """Consume credits from the organization's balance."""
+        payload = {"amount": amount}
+        if description:
+            payload["description"] = description
+        if product_id:
+            payload["product_id"] = product_id
+        if currency != 'credits':
+            payload["currency"] = currency
+        if reference_id:
+            payload["reference_id"] = reference_id
+        if reference_type:
+            payload["reference_type"] = reference_type
+        if metadata:
+            payload["metadata"] = metadata
+
+        try:
+            response = self.session.post(f"{self.api_url}/functions/v1/consume-credits", json=payload)
+            self._handle_response_errors(response)
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise NetworkError(str(e))
+
+    def get_credits_balance(self, product_id=None, currency=None):
+        """Get credit balance for the organization."""
+        params = {}
+        if product_id:
+            params["product_id"] = product_id
+        if currency:
+            params["currency"] = currency
+
+        try:
+            response = self.session.get(f"{self.api_url}/functions/v1/get-credit-balance", params=params)
+            self._handle_response_errors(response)
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise NetworkError(str(e))
+
+    # ── Entitlements Management ──
+
+    def list_entitlements(self):
+        """List all entitlements for the organization."""
+        try:
+            response = self.session.get(f"{self.api_url}/functions/v1/manage-entitlements")
+            self._handle_response_errors(response)
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise NetworkError(str(e))
+
+    def create_entitlement(self, code, name, data_type='boolean', description=None, metadata=None):
+        """Create a new entitlement definition."""
+        payload = {"code": code, "name": name, "data_type": data_type}
+        if description:
+            payload["description"] = description
+        if metadata:
+            payload["metadata"] = metadata
+
+        try:
+            response = self.session.post(f"{self.api_url}/functions/v1/manage-entitlements", json=payload)
+            self._handle_response_errors(response)
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise NetworkError(str(e))
+
+    def update_entitlement(self, entitlement_id, **kwargs):
+        """Update an existing entitlement definition."""
+        try:
+            response = self.session.patch(f"{self.api_url}/functions/v1/manage-entitlements/{entitlement_id}", json=kwargs)
+            self._handle_response_errors(response)
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise NetworkError(str(e))
+
+    def delete_entitlement(self, entitlement_id):
+        """Delete an entitlement definition."""
+        try:
+            response = self.session.delete(f"{self.api_url}/functions/v1/manage-entitlements/{entitlement_id}")
+            self._handle_response_errors(response)
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise NetworkError(str(e))
+
+    def assign_entitlement_to_license(self, entitlement_id, license_id, value):
+        """Assign an entitlement to a specific license."""
+        try:
+            response = self.session.post(
+                f"{self.api_url}/functions/v1/manage-entitlements/{entitlement_id}/assign-to-license",
+                json={"license_id": license_id, "value": value}
+            )
+            self._handle_response_errors(response)
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise NetworkError(str(e))
+
+    def assign_entitlement_to_policy(self, entitlement_id, policy_id, default_value):
+        """Assign an entitlement to a policy (as default)."""
+        try:
+            response = self.session.post(
+                f"{self.api_url}/functions/v1/manage-entitlements/{entitlement_id}/assign-to-policy",
+                json={"policy_id": policy_id, "default_value": default_value}
+            )
+            self._handle_response_errors(response)
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise NetworkError(str(e))
+
     def download_artifact(self, license_key, release_id=None, artifact_id=None, platform=None, architecture=None):
         """
         Phase 5: Download artifact with license verification
