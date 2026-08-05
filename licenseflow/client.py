@@ -61,6 +61,41 @@ class LicenseFlowClient:
         """Verify the license status, using cache if available."""
         if not device_id:
             device_id = self.get_hardware_id()
+
+        return self._verify_with_device(license_key, device_id, environment_id)
+
+    def resolve_for_identity(self, email, product_id=None, environment_id=None):
+        """Identity-based (keyless) entitlement resolution.
+
+        Resolve everything an authenticated person is entitled to from their email
+        alone -- licenses they own plus any seats assigned to them -- without
+        handling a license key. Authenticate the user in your own app or IDP
+        first, then call this from your backend with the verified email.
+        """
+        cache_key = f"identity:{email}:{product_id or 'all'}:{environment_id or 'default'}"
+        if cache_key in self.cache:
+            return self.cache[cache_key]
+
+        payload = {
+            "email": email,
+            "productId": product_id,
+            "environmentId": environment_id,
+        }
+
+        try:
+            response = self.session.post(f"{self.api_url}/functions/v1/resolve-entitlements", json=payload)
+            self._handle_response_errors(response)
+            data = response.json()
+
+            if data.get("resolved"):
+                self.cache[cache_key] = data
+
+            return data
+        except requests.exceptions.RequestException as e:
+            raise NetworkError(str(e))
+
+    def _verify_with_device(self, license_key, device_id, environment_id=None):
+        """Internal: perform the device-bound verification request."""
             
         cache_key = f"verify:{license_key}:{device_id}:{environment_id or 'default'}"
         if cache_key in self.cache:
