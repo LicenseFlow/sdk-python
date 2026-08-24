@@ -2,10 +2,11 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/licenseflow-python)](https://pypi.org/project/licenseflow-python/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Python](https://img.shields.io/badge/python-3.9%2B-blue)](https://pypi.org/project/licenseflow-python/)
 
 **Stop Building Licensing Infrastructure. Start Shipping Software.**
 
-The official Python SDK for [LicenseFlow](https://licenseflow.dev). Protect your intellectual property, enforce entitlements, and manage software distribution with enterprise-grade security.
+The official Python SDK for [LicenseFlow](https://licenseflow.dev). Activate, verify, and enforce software entitlements with multi-tier caching, offline grace periods, and zero-friction integration.
 
 ## Installation
 
@@ -16,25 +17,62 @@ pip install licenseflow-python
 ## Quick Start
 
 ```python
-from licenseflow import LicenseFlowClient, RateLimitError, InvalidLicenseError
+from licenseflow import LicenseFlowClient
 
 client = LicenseFlowClient(
     api_url='https://api.licenseflow.dev',
     api_key='lf_live_xxxxxxxxxxxx',
-    jwt_secret='your-jwt-secret'
+    cache_ttl=300,          # Cache TTL in seconds (default: 5 min)
+    offline_grace=259200    # Offline grace period in seconds (default: 72h)
 )
 
-# Activate
+# Activate a license on this device
 activation = client.activate(
     license_key='XXXX-YYYY-ZZZZ-AAAA',
-    device_name='My Computer'
+    device_name='Production Server'
 )
 print(f"Activated: {activation['success']}")
 
-# Verify (uses internal TTL cache)
+# Verify (served from cache when possible)
 verification = client.verify(license_key='XXXX-YYYY-ZZZZ-AAAA')
 print(f"Valid: {verification['valid']}")
 ```
+
+---
+
+## Entitlement Caching
+
+The SDK includes `EntitlementCache` — a multi-tier caching system that dramatically reduces API round-trips and ensures your application keeps running even when offline.
+
+```python
+from licenseflow import LicenseFlowClient, EntitlementCache
+
+# Cache is built-in; configure via constructor
+client = LicenseFlowClient(
+    api_url='https://api.licenseflow.dev',
+    api_key='lf_live_xxxxxxxxxxxx',
+    cache_ttl=300,       # How long cached results are "fresh" (seconds)
+    offline_grace=259200 # How long stale cache is used when API is down (seconds)
+)
+
+# First call: live API fetch, result cached
+result = client.verify(license_key='XXXX-YYYY-ZZZZ-AAAA')
+
+# Subsequent calls: served from in-memory cache (no network)
+result = client.verify(license_key='XXXX-YYYY-ZZZZ-AAAA')
+
+# During network outage: stale cache is used within grace window
+# After grace period expires: OfflineLicenseError is raised
+```
+
+**Cache behaviour:**
+
+| Scenario | Behaviour |
+|---|---|
+| Cache hit within TTL | Returns cached result immediately |
+| Cache miss or TTL expired | Fetches from API, updates cache |
+| API down, cache within grace | Returns stale result (offline grace) |
+| API down, cache expired | Raises `OfflineLicenseError` |
 
 ---
 
@@ -43,7 +81,7 @@ print(f"Valid: {verification['valid']}")
 ### Core Methods
 
 | Method | Description |
-|--------|-------------|
+|---|---|
 | `activate(license_key, device_name, environment_id=None)` | Activate a license on a device |
 | `verify(license_key, environment_id=None)` | Verify license status (cached) |
 | `deactivate(license_key, device_id=None)` | Deactivate a license from a device |
@@ -53,9 +91,13 @@ print(f"Valid: {verification['valid']}")
 ### Entitlements
 
 ```python
+verification = client.verify(license_key='XXXX-YYYY-ZZZZ-AAAA')
+
+# Feature flags
 if client.has_feature(verification, 'ai_features'):
     enable_ai()
 
+# Numeric limits
 limit = client.get_entitlement(verification, 'api_rate_limit')
 print(f"Rate limit: {limit.get('limit', 1000)} req/hr")
 ```
@@ -67,7 +109,7 @@ print(f"Rate limit: {limit.get('limit', 1000)} req/hr")
 lease = client.checkout_license(
     license_key='XXXX-XXXX',
     duration_seconds=3600,
-    requester_id=f"ci-{os.environ['CI_JOB_ID']}",
+    requester_id='ci-runner-1',
     requester_type='ci_runner'
 )
 print(f"Lease: {lease['lease_key']}, expires: {lease['expires_at']}")
@@ -107,10 +149,10 @@ if update:
         platform='linux',
         architecture='x64'
     )
-    print(f"Download: {download['url']}")
+    print(f"Download URL: {download['url']}")
 ```
 
-### Offline Licensing
+### Offline License Files
 
 ```python
 with open('license.lic', 'r') as f:
@@ -137,30 +179,38 @@ from licenseflow import (
     LicenseFlowError,
     RateLimitError,
     InvalidLicenseError,
-    NetworkError
+    NetworkError,
+    OfflineLicenseError
 )
 
 try:
     client.activate(license_key='XXXX', device_name='Server')
 except RateLimitError:
-    print("Rate limit exceeded, retry later")
+    print("Rate limit exceeded — retry later")
 except InvalidLicenseError:
     print("License is invalid or expired")
 except NetworkError:
     print("Network error — check connectivity")
+except OfflineLicenseError:
+    print("Offline grace period expired — reconnect to continue")
 ```
 
-## Configuration
+---
+
+## Configuration Reference
 
 ```python
 client = LicenseFlowClient(
-    api_url='https://api.licenseflow.dev',
-    api_key='lf_live_xxxxxxxxxxxx',
-    jwt_secret='your-jwt-secret',
-    cache_ttl=300,    # Cache duration in seconds (default 5 min)
-    retries=3         # Retry count for failed requests
+    api_url='https://api.licenseflow.dev',  # LicenseFlow API endpoint
+    api_key='lf_live_xxxxxxxxxxxx',          # API key from dashboard
+    jwt_secret='your-jwt-secret',            # For offline license verification
+    cache_ttl=300,                           # Cache TTL in seconds (default: 300)
+    offline_grace=259200,                    # Offline grace in seconds (default: 72h)
+    retries=3                                # Retry count for failed requests
 )
 ```
+
+---
 
 ## License
 
@@ -169,5 +219,5 @@ MIT
 ## Links
 
 - 📖 [Documentation](https://docs.licenseflow.dev)
-- 🐛 [Issues](https://github.com/licenseflow/python-sdk/issues)
+- 🐛 [Issues](https://github.com/LicenseFlow/sdk-python/issues)
 - 🏠 [Homepage](https://licenseflow.dev)
