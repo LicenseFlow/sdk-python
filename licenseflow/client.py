@@ -11,17 +11,23 @@ import json
 from datetime import datetime
 
 class LicenseFlowClient:
-    def __init__(self, api_url, api_key, jwt_secret=None, cache_ttl=300, retries=3):
+    def __init__(self, api_url, api_key=None, client_token=None, jwt_secret=None, cache_ttl=300, retries=3):
         self.api_url = api_url.rstrip('/')
         self.api_key = api_key
+        self.client_token = client_token
         self.jwt_secret = jwt_secret
         self.cache = TTLCache(maxsize=100, ttl=cache_ttl)
         self.session = requests.Session()
-        self.session.headers.update({
-            'x-api-key': api_key,
-            'Authorization': f'Bearer {api_key}',
-            'Content-Type': 'application/json'
-        })
+        
+        headers = {'Content-Type': 'application/json'}
+        if api_key:
+            headers['x-api-key'] = api_key
+            headers['Authorization'] = f'Bearer {api_key}'
+        if client_token:
+            headers['x-client-token'] = client_token
+            if not api_key:
+                headers['Authorization'] = f'Bearer {client_token}'
+        self.session.headers.update(headers)
         
         # Configure simple retry adapter (can be expanded)
         adapter = requests.adapters.HTTPAdapter(max_retries=retries)
@@ -480,3 +486,90 @@ class LicenseFlowClient:
             if isinstance(e, ValueError):
                 raise
             raise ValueError(f'Failed to verify offline license: {str(e)}')
+
+    # ── Floating License Lease Methods ──
+
+    def checkout_license(self, license_key, duration_seconds=3600, requester_id=None, requester_type="sdk", metadata=None):
+        """Acquire a temporary floating license lease."""
+        payload = {
+            "license_key": license_key,
+            "duration_seconds": duration_seconds,
+            "requester_id": requester_id or self.get_hardware_id(),
+            "requester_type": requester_type,
+            "metadata": metadata or {},
+        }
+        try:
+            response = self.session.post(f"{self.api_url}/functions/v1/checkout-license", json=payload)
+            self._handle_response_errors(response)
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise NetworkError(str(e))
+
+    def checkin_license(self, lease_key):
+        """Release (check-in) a floating license lease."""
+        try:
+            response = self.session.post(f"{self.api_url}/functions/v1/checkin-license", json={"lease_key": lease_key})
+            self._handle_response_errors(response)
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise NetworkError(str(e))
+
+    def get_lease_status(self, lease_key):
+        """Get the status of a floating license lease."""
+        try:
+            response = self.session.post(f"{self.api_url}/functions/v1/lease-status", json={"lease_key": lease_key})
+            self._handle_response_errors(response)
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise NetworkError(str(e))
+
+    # ── Token & Credit Metering ──
+
+    def meter_usage(self, metric_name, value=1, license_key=None, client_token=None, metadata=None):
+        """Record usage or decrement units for token-metered licenses."""
+        headers = {}
+        if client_token:
+            headers["x-client-token"] = client_token
+            headers["Authorization"] = f"Bearer {client_token}"
+
+        payload = {
+            "metric_name": metric_name,
+            "metric_value": value,
+            "metadata": metadata or {},
+        }
+        if license_key:
+            payload["license_key"] = license_key
+
+        try:
+            response = self.session.post(
+                f"{self.api_url}/functions/v1/record-usage",
+                json=payload,
+                headers=headers or None
+            )
+            self._handle_response_errors(response)
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise NetworkError(str(e))
+
+    def consume_credits(self, amount, description=None, product_id=None, currency="credits", reference_id=None, reference_type=None, metadata=None):
+        """Consume credits from the organization's credit pool."""
+        payload = {
+            "amount": amount,
+            "description": description or "API consumption",
+            "currency": currency,
+            "metadata": metadata or {},
+        }
+        if product_id:
+            payload["product_id"] = product_id
+        if reference_id:
+            payload["reference_id"] = reference_id
+        if reference_type:
+            payload["reference_type"] = reference_type
+
+        try:
+            response = self.session.post(f"{self.api_url}/functions/v1/consume-credits", json=payload)
+            self._handle_response_errors(response)
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise NetworkError(str(e))
+
