@@ -126,7 +126,7 @@ class LicenseFlowClient:
             raise NetworkError(str(e))
 
     def record_usage(self, license_key, metric_name, value, increment=False, is_test=False, environment_id=None):
-        """Record usage metrics for a license."""
+        """Record usage metrics for a license (legacy)."""
         payload = {
             "license_key": license_key,
             "metric_name": metric_name,
@@ -140,6 +140,47 @@ class LicenseFlowClient:
             response = self.session.post(f"{self.api_url}/functions/v1/record-usage", json=payload)
             self._handle_response_errors(response)
             return {"success": True, **response.json()}
+        except requests.exceptions.RequestException as e:
+            raise NetworkError(str(e))
+
+    def track_usage(self, event, quantity=1, unit="units", license_key=None, customer_id=None, idempotency_key=None, dimensions=None, metadata=None):
+        """
+        Track commercial telemetry events with idempotency and real-time quota feedback.
+        Returns a dict with success, event_id, quota_status, quota_policy, is_duplicate, and usage.
+        """
+        payload = {
+            "event_name": event,
+            "metric_name": event,
+            "quantity": quantity,
+            "unit": unit,
+            "license_key": license_key,
+            "customer_id": customer_id,
+            "idempotency_key": idempotency_key,
+            "dimensions": dimensions or {},
+            "metadata": metadata or {}
+        }
+        try:
+            response = self.session.post(f"{self.api_url}/functions/v1/record-usage", json=payload)
+            data = response.json() if response.content else {}
+            if response.status_code == 429:
+                return {
+                    "success": False,
+                    "blocked": True,
+                    "error": data.get("error", "QUOTA_EXCEEDED"),
+                    "status": "exceeded",
+                    "action": "BLOCK",
+                    "usage": data.get("usage", {})
+                }
+            self._handle_response_errors(response)
+            return {
+                "success": True,
+                "event_id": data.get("event_id"),
+                "is_duplicate": data.get("is_duplicate", False),
+                "status": data.get("status", "normal"),
+                "action": data.get("action", "ALLOW"),
+                "usage": data.get("usage", {}),
+                **data
+            }
         except requests.exceptions.RequestException as e:
             raise NetworkError(str(e))
 
