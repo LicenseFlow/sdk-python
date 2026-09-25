@@ -614,3 +614,71 @@ class LicenseFlowClient:
         except requests.exceptions.RequestException as e:
             raise NetworkError(str(e))
 
+    # ── AI Token Budget & Gateway (License-key auth) ─────────────────────
+
+    def ai_token_budget(self, license_key, requested_tokens=0):
+        """Check AI token budget for a license key.
+
+        Returns quota, used, remaining, allowed models, and whether
+        a given token count fits within the remaining budget.
+
+        Args:
+            license_key: The software license key to check.
+            requested_tokens: Optional token count to check sufficiency.
+
+        Returns:
+            dict with has_quota, quota, used, remaining, sufficient, allowed_models.
+        """
+        payload = {
+            "p_license_id": license_key,
+            "p_requested_tokens": requested_tokens,
+        }
+        try:
+            response = self.session.post(
+                f"{self.api_url}/rest/v1/rpc/check_ai_token_budget",
+                json=payload
+            )
+            self._handle_response_errors(response)
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise NetworkError(str(e))
+
+    def ai_gateway_chat(self, license_key, model, messages, subject="sdk_agent",
+                        temperature=0.7, max_tokens=1000, stream=False, metadata=None):
+        """Send a chat completion through the AI Gateway using a license key.
+
+        The license key must have an ai_token_quota entitlement attached.
+
+        Args:
+            license_key: The software license key for authentication.
+            model: Model identifier (e.g., 'gpt-4', 'claude-3-sonnet').
+            messages: List of message dicts with 'role' and 'content'.
+            subject: Agent/subject identifier for audit trails.
+            temperature: Sampling temperature (0-2).
+            max_tokens: Maximum tokens in the response.
+            stream: Whether to stream the response.
+            metadata: Additional metadata dict.
+
+        Returns:
+            Chat completion response with licenseflow_meta.
+        """
+        payload = {
+            "model": model,
+            "messages": messages,
+            "subject": subject,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": stream,
+            "metadata": metadata or {},
+        }
+        try:
+            response = self.session.post(
+                f"{self.api_url}/functions/v1/ai-gateway",
+                json=payload,
+                headers={"x-license-key": license_key}
+            )
+            self._handle_response_errors(response)
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise NetworkError(str(e))
+
