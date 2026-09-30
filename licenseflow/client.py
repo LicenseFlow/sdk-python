@@ -29,10 +29,72 @@ class LicenseFlowClient:
                 headers['Authorization'] = f'Bearer {client_token}'
         self.session.headers.update(headers)
         
-        # Configure simple retry adapter (can be expanded)
-        adapter = requests.adapters.HTTPAdapter(max_retries=retries)
-        self.session.mount("https://", adapter)
-        self.session.mount("http://", adapter)
+    def authorize(self, subject, resource, action="*", environment=None, region=None, requested_units=None, context=None, dry_run=False):
+        """Runtime Authorization Control Plane (POST /v1/authorize)
+        
+        Evaluates whether a subject (user, agent, service, API client) is entitled
+        to perform an action on a protected resource under active policies, quotas, and budgets.
+        """
+        payload = {
+            "subject": subject,
+            "resource": resource,
+            "action": action,
+            "environment": environment,
+            "region": region,
+            "requested_units": requested_units,
+            "context": context or {},
+            "dry_run": dry_run,
+        }
+        try:
+            response = self.session.post(f"{self.api_url}/functions/v1/authorize", json=payload)
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise NetworkError(str(e))
+
+    def check_entitlement(self, subject, resource, action="*"):
+        """Check if a subject has explicit entitlement to access a resource.
+        Returns True if allowed, False if denied.
+        """
+        try:
+            decision = self.authorize(subject, resource, action=action)
+            return bool(decision.get("allowed", False))
+        except Exception:
+            return False
+
+    def record_usage_event(self, subject, resource, meter_key, units, dimensions=None, metadata=None, idempotency_key=None):
+        """Universal Metering Event Ingestion (POST /v1/meter)
+        Records consumption, updates dimensioned meters, and deducts from spending budgets.
+        """
+        payload = {
+            "operation": "record",
+            "meter_key": meter_key,
+            "subject": subject,
+            "resource": resource,
+            "units": units,
+            "dimensions": dimensions or {},
+            "metadata": metadata or {},
+            "idempotency_key": idempotency_key,
+        }
+        try:
+            response = self.session.post(f"{self.api_url}/functions/v1/meter", json=payload)
+            self._handle_response_errors(response)
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise NetworkError(str(e))
+
+    def revoke(self, target_identifier, reason="Emergency revocation"):
+        """Emergency Revocation / Kill Switch Trigger."""
+        payload = {
+            "targetId": target_identifier,
+            "level": "hard",
+            "reason": reason,
+        }
+        try:
+            response = self.session.post(f"{self.api_url}/functions/v1/kill-switch", json=payload)
+            self._handle_response_errors(response)
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise NetworkError(str(e))
 
     def get_hardware_id(self):
         """Generate a unique hardware ID for the current machine."""
