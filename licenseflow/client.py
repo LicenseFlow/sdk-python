@@ -4,6 +4,7 @@ import platform
 import socket
 from cachetools import TTLCache
 from jose import jwt
+from .endpoints import CanonicalSession
 from .exceptions import LicenseFlowError, NetworkError, RateLimitError, InvalidLicenseError
 from cryptography.hazmat.primitives.asymmetric import ed25519
 import base64
@@ -17,7 +18,7 @@ class LicenseFlowClient:
         self.client_token = client_token
         self.jwt_secret = jwt_secret
         self.cache = TTLCache(maxsize=100, ttl=cache_ttl)
-        self.session = requests.Session()
+        self.session = CanonicalSession()
         
         headers = {'Content-Type': 'application/json'}
         if api_key:
