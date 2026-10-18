@@ -27,6 +27,10 @@ class LicenseFlowClient:
         self.jwt_secret = jwt_secret
         self.cache = TTLCache(maxsize=100, ttl=cache_ttl)
         self.session = CanonicalSession()
+        self._revoked_subjects = set()
+        self._revoked_licenses = set()
+        self._revoked_tools = set()
+        self._kill_switch_listener = None
         
         headers = {'Content-Type': 'application/json'}
         if api_key:
@@ -44,6 +48,13 @@ class LicenseFlowClient:
         Evaluates whether a subject (user, agent, service, API client) is entitled
         to perform an action on a protected resource under active policies, quotas, and budgets.
         """
+        # Zero-latency local kill-switch pre-flight check
+        if self.is_revoked(subject=subject):
+            raise PolicyDeniedError(
+                f"Subject '{subject}' has been revoked by an active emergency kill switch",
+                code="EMERGENCY_REVOKED",
+            )
+
         payload = {
             "subject": subject,
             "resource": resource,
@@ -88,6 +99,25 @@ class LicenseFlowClient:
         Evaluates policies, emergency kill switches, and human approval gates
         before dispatching downstream.
         """
+        target_subject = subject or agent_id or "agent_default"
+        # Zero-latency fail-closed pre-flight check: drop if subject, license, or tool revoked
+        if self.is_revoked(subject=target_subject, license_key=license_key, tool_name=tool):
+            return {
+                "allowed": False,
+                "decision": "EMERGENCY_REVOKED",
+                "status": "revoked",
+                "error": f"Tool '{tool}' or subject '{target_subject}' blocked by active kill switch",
+                "is_error": True,
+                "raw_rpc_response": {
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": 20202,
+                        "message": f"Action blocked by active kill switch: {tool}",
+                        "data": {"decision": "EMERGENCY_REVOKED", "status": "revoked"},
+                    },
+                },
+            }
+
         rpc_payload = {
             "jsonrpc": "2.0",
             "id": f"call-{uuid.uuid4().hex[:8]}",
@@ -97,7 +127,7 @@ class LicenseFlowClient:
                 "arguments": arguments or {},
                 "_meta": {
                     "agent_id": agent_id,
-                    "subject": subject or agent_id or "agent_default",
+                    "subject": target_subject,
                     "mcp_server_id": mcp_server_id,
                     "downstream_url": downstream_url,
                     "environment": environment,
@@ -213,6 +243,14 @@ class LicenseFlowClient:
         def decorator(fn):
             @functools.wraps(fn)
             def wrapper(*args, **kwargs):
+                target_sub = subject or agent_id or "agent_default"
+                # Immediate check: abort execution if kill switch active
+                if self.is_revoked(subject=target_sub, license_key=license_key, tool_name=tool_name):
+                    raise PolicyDeniedError(
+                        f"Execution of tool '{tool_name}' blocked by active emergency kill switch for subject '{target_sub}'",
+                        code="EMERGENCY_REVOKED",
+                    )
+
                 tool_args = kwargs if kwargs else (args[0] if len(args) == 1 and isinstance(args[0], dict) else {"args": args})
 
                 # If downstream_url provided, route through central MCP Enforcement Gateway
@@ -236,7 +274,7 @@ class LicenseFlowClient:
 
                 # Local execution: run pre-flight policy evaluation
                 auth_decision = self.authorize(
-                    subject=subject or agent_id or "agent_default",
+                    subject=target_sub,
                     resource=f"tool:{tool_name}",
                     action="execute",
                     environment=environment,
@@ -257,6 +295,89 @@ class LicenseFlowClient:
 
         if tool_fn is not None:
             return decorator(tool_fn)
+        return decorator
+
+    # ── Real-Time Revocation & Kill-Switch Methods ─────────────────────────
+
+    def is_revoked(self, subject: str = None, license_key: str = None, tool_name: str = None) -> bool:
+        """Sub-millisecond local check if subject, license, or tool is blacklisted."""
+        if subject and str(subject) in self._revoked_subjects:
+            return True
+        if license_key and str(license_key) in self._revoked_licenses:
+            return True
+        if tool_name and str(tool_name) in self._revoked_tools:
+            return True
+        return False
+
+    def trip_kill_switch_local(self, target_type: str, target_identifier: str, reason: str = "Emergency shutoff"):
+        """Trip an emergency kill-switch locally in memory.
+        
+        Instantly halts sub-second tool execution and invalidates cached entitlements.
+        """
+        t_type = target_type.lower()
+        t_id = str(target_identifier)
+        if t_type in ("subject", "user", "agent"):
+            self._revoked_subjects.add(t_id)
+        elif t_type in ("license", "license_key", "license_id"):
+            self._revoked_licenses.add(t_id)
+        elif t_type in ("tool", "mcp_tool"):
+            self._revoked_tools.add(t_id)
+        else:
+            self._revoked_subjects.add(t_id)
+
+        # Evict cache entries
+        try:
+            keys_to_delete = [k for k in list(self.cache.keys()) if t_id in str(k)]
+            for k in keys_to_delete:
+                self.cache.pop(k, None)
+        except Exception:
+            pass
+
+    def reset_kill_switch_local(self, target_identifier: str):
+        """Reset a locally blacklisted target identifier."""
+        t_id = str(target_identifier)
+        self._revoked_subjects.discard(t_id)
+        self._revoked_licenses.discard(t_id)
+        self._revoked_tools.discard(t_id)
+
+    def start_kill_switch_listener(self, poll_interval: float = 1.0, stream_url: str = None, on_revocation=None):
+        """Start the background daemon thread listening for real-time revocations."""
+        from .stream import KillSwitchListener
+        if self._kill_switch_listener and self._kill_switch_listener.is_running:
+            return self._kill_switch_listener
+
+        self._kill_switch_listener = KillSwitchListener(
+            client=self,
+            poll_interval=poll_interval,
+            stream_url=stream_url,
+            on_revocation=on_revocation,
+        )
+        self._kill_switch_listener.start()
+        return self._kill_switch_listener
+
+    def stop_kill_switch_listener(self):
+        """Stop the background revocation listener thread."""
+        if self._kill_switch_listener:
+            self._kill_switch_listener.stop()
+            self._kill_switch_listener = None
+
+    def protect_agent_swarm(self, subject: str = None):
+        """Decorator for LangChain / AutoGen / LlamaIndex agent loops.
+        
+        Evaluates active kill switches before every invocation. If tripped,
+        aborts immediately with PolicyDeniedError (EMERGENCY_REVOKED).
+        """
+        def decorator(fn):
+            @functools.wraps(fn)
+            def wrapper(*args, **kwargs):
+                sub = subject or kwargs.get("agent_id") or kwargs.get("subject") or "agent_swarm"
+                if self.is_revoked(subject=sub):
+                    raise PolicyDeniedError(
+                        f"Agent swarm '{sub}' halted by active emergency kill switch",
+                        code="EMERGENCY_REVOKED",
+                    )
+                return fn(*args, **kwargs)
+            return wrapper
         return decorator
 
     def clear_cache(self):

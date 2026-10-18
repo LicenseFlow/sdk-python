@@ -1,4 +1,5 @@
 from .client import LicenseFlowClient
+from .stream import KillSwitchListener, RevocationEvent
 from .exceptions import (
     LicenseFlowError,
     NetworkError,
@@ -10,6 +11,8 @@ from .exceptions import (
 
 __all__ = [
     "LicenseFlowClient",
+    "KillSwitchListener",
+    "RevocationEvent",
     "LicenseFlowError",
     "NetworkError",
     "RateLimitError",
