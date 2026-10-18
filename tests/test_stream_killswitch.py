@@ -10,6 +10,13 @@ for mod_name in ['requests', 'requests.exceptions', 'cachetools', 'jose', 'crypt
     if mod_name not in sys.modules:
         sys.modules[mod_name] = MagicMock()
 
+class DummyRequestException(Exception):
+    pass
+
+sys.modules['requests'].exceptions.RequestException = DummyRequestException
+if 'requests.exceptions' in sys.modules:
+    sys.modules['requests.exceptions'].RequestException = DummyRequestException
+
 class DummySession:
     def __init__(self):
         self.headers = {}
