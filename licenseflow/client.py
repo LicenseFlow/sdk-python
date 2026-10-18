@@ -15,8 +15,9 @@ from .exceptions import (
     PolicyDeniedError,
 )
 try:
-    from cryptography.hazmat.primitives.asymmetric import ed25519
-except ImportError:
+    import importlib
+    ed25519 = importlib.import_module("cryptography.hazmat.primitives.asymmetric.ed25519")
+except Exception:
     ed25519 = None
 import base64
 import json
