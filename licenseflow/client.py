@@ -14,7 +14,10 @@ from .exceptions import (
     ApprovalRequiredError,
     PolicyDeniedError,
 )
-from cryptography.hazmat.primitives.asymmetric import ed25519
+try:
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+except ImportError:
+    ed25519 = None
 import base64
 import json
 from datetime import datetime
