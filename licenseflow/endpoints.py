@@ -18,6 +18,7 @@ CANONICAL_ENDPOINTS = {
     "resolve-entitlements": "/v1/entitlements/resolve",
     "check-entitlement": "/v1/entitlements/check",
     "authorize": "/v1/access/authorize",
+    "mcp-gateway": "/v1/mcp-gateway",
 }
 
 GATEWAY_HOST = "api.licenseflow.dev"

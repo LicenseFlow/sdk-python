@@ -4,8 +4,16 @@ import platform
 import socket
 from cachetools import TTLCache
 from jose import jwt
+import functools
 from .endpoints import CanonicalSession
-from .exceptions import LicenseFlowError, NetworkError, RateLimitError, InvalidLicenseError
+from .exceptions import (
+    LicenseFlowError,
+    NetworkError,
+    RateLimitError,
+    InvalidLicenseError,
+    ApprovalRequiredError,
+    PolicyDeniedError,
+)
 from cryptography.hazmat.primitives.asymmetric import ed25519
 import base64
 import json
@@ -61,6 +69,199 @@ class LicenseFlowClient:
             return bool(decision.get("allowed", False))
         except Exception:
             return False
+
+    def execute_tool(
+        self,
+        tool: str,
+        arguments: dict = None,
+        agent_id: str = None,
+        subject: str = None,
+        mcp_server_id: str = None,
+        downstream_url: str = None,
+        environment: str = None,
+        region: str = None,
+        license_key: str = None,
+        downstream_headers: dict = None,
+    ) -> dict:
+        """MCP Enforcement Gateway: Execute Tool with Pre-Flight Runtime Enforcement.
+        
+        Evaluates policies, emergency kill switches, and human approval gates
+        before dispatching downstream.
+        """
+        rpc_payload = {
+            "jsonrpc": "2.0",
+            "id": f"call-{uuid.uuid4().hex[:8]}",
+            "method": "tools/call",
+            "params": {
+                "name": tool,
+                "arguments": arguments or {},
+                "_meta": {
+                    "agent_id": agent_id,
+                    "subject": subject or agent_id or "agent_default",
+                    "mcp_server_id": mcp_server_id,
+                    "downstream_url": downstream_url,
+                    "environment": environment,
+                    "region": region,
+                    "license_key": license_key,
+                    "headers": downstream_headers or {},
+                },
+            },
+        }
+
+        headers = {}
+        if license_key:
+            headers["x-license-key"] = license_key
+
+        try:
+            response = self.session.post(
+                f"{self.api_url}/functions/v1/mcp-gateway",
+                json=rpc_payload,
+                headers=headers,
+            )
+            data = response.json()
+            if "error" in data:
+                err = data["error"]
+                err_data = err.get("data") or {}
+                decision = err_data.get("decision") or ("REQUIRE_APPROVAL" if err.get("code") == 20201 else "DENY")
+                return {
+                    "allowed": False,
+                    "decision": decision,
+                    "status": "pending_approval" if decision == "REQUIRE_APPROVAL" else "denied",
+                    "error": err.get("message", "Tool execution denied"),
+                    "approval_request_id": err_data.get("approval_request_id"),
+                    "is_error": True,
+                    "raw_rpc_response": data,
+                }
+
+            result = data.get("result", {})
+            return {
+                "allowed": True,
+                "decision": "ALLOW",
+                "status": "executed",
+                "result": result.get("content", result),
+                "is_error": result.get("isError", False),
+                "raw_rpc_response": data,
+            }
+        except requests.exceptions.RequestException as e:
+            raise NetworkError(str(e))
+
+    def list_tools(
+        self,
+        agent_id: str = None,
+        subject: str = None,
+        mcp_server_id: str = None,
+        downstream_url: str = None,
+        license_key: str = None,
+    ) -> dict:
+        """MCP Enforcement Gateway: List Permitted Tools.
+        
+        Intercepts tool discovery, filtering out forbidden or unentitled tools.
+        """
+        rpc_payload = {
+            "jsonrpc": "2.0",
+            "id": f"list-{uuid.uuid4().hex[:8]}",
+            "method": "tools/list",
+            "params": {
+                "_meta": {
+                    "agent_id": agent_id,
+                    "subject": subject or agent_id or "agent_default",
+                    "mcp_server_id": mcp_server_id,
+                    "downstream_url": downstream_url,
+                    "license_key": license_key,
+                },
+            },
+        }
+
+        headers = {}
+        if license_key:
+            headers["x-license-key"] = license_key
+
+        try:
+            response = self.session.post(
+                f"{self.api_url}/functions/v1/mcp-gateway",
+                json=rpc_payload,
+                headers=headers,
+            )
+            data = response.json()
+            if "error" in data:
+                raise LicenseFlowError(data["error"].get("message", "MCP tools/list failed"), code="MCP_LIST_FAILED")
+            return {
+                "tools": data.get("result", {}).get("tools", []),
+                "raw_rpc_response": data,
+            }
+        except requests.exceptions.RequestException as e:
+            raise NetworkError(str(e))
+
+    def wrap_tool(
+        self,
+        tool_name: str,
+        tool_fn: callable = None,
+        agent_id: str = None,
+        subject: str = None,
+        mcp_server_id: str = None,
+        downstream_url: str = None,
+        environment: str = None,
+        region: str = None,
+        license_key: str = None,
+    ):
+        """Agent Runtime Middleware: Wrap a tool execution handler or function.
+        
+        Can be used as a decorator or wrapper. Enforces pre-flight authorization,
+        blocking unentitled or policy-violating executions before code runs.
+        Compatible with LangChain, LlamaIndex, and AutoGen tools.
+        """
+        def decorator(fn):
+            @functools.wraps(fn)
+            def wrapper(*args, **kwargs):
+                tool_args = kwargs if kwargs else (args[0] if len(args) == 1 and isinstance(args[0], dict) else {"args": args})
+
+                # If downstream_url provided, route through central MCP Enforcement Gateway
+                if downstream_url:
+                    res = self.execute_tool(
+                        tool=tool_name,
+                        arguments=tool_args,
+                        agent_id=agent_id,
+                        subject=subject,
+                        mcp_server_id=mcp_server_id,
+                        downstream_url=downstream_url,
+                        environment=environment,
+                        region=region,
+                        license_key=license_key,
+                    )
+                    if not res.get("allowed"):
+                        if res.get("decision") == "REQUIRE_APPROVAL" and res.get("approval_request_id"):
+                            raise ApprovalRequiredError(res["approval_request_id"], res.get("error"))
+                        raise PolicyDeniedError(res.get("error", "Execution denied by policy"))
+                    return res.get("result")
+
+                # Local execution: run pre-flight policy evaluation
+                auth_decision = self.authorize(
+                    subject=subject or agent_id or "agent_default",
+                    resource=f"tool:{tool_name}",
+                    action="execute",
+                    environment=environment,
+                    region=region,
+                    context={"arguments": tool_args, "mcp_server_id": mcp_server_id},
+                )
+
+                if not auth_decision.get("allowed"):
+                    if auth_decision.get("decision") == "REQUIRE_APPROVAL" and auth_decision.get("approval_request_id"):
+                        raise ApprovalRequiredError(auth_decision["approval_request_id"], auth_decision.get("reason"))
+                    raise PolicyDeniedError(
+                        auth_decision.get("reason", "Policy denied tool execution"),
+                        code=auth_decision.get("code", "POLICY_DENIED"),
+                    )
+
+                return fn(*args, **kwargs)
+            return wrapper
+
+        if tool_fn is not None:
+            return decorator(tool_fn)
+        return decorator
+
+    def clear_cache(self):
+        """Clear client in-memory cache."""
+        self.cache.clear()
 
     def record_usage_event(self, subject, resource, meter_key, units, dimensions=None, metadata=None, idempotency_key=None):
         """Universal Metering Event Ingestion (POST /v1/meter)
