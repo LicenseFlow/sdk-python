@@ -12,6 +12,7 @@ CANONICAL_ENDPOINTS = {
     "activate-license": "/v1/licenses/activate",
     "deactivate-license": "/v1/licenses/deactivate",
     "checkout-license": "/v1/licenses/checkout",
+    "checkin-license": "/v1/licenses/checkin",
     "lease-status": "/v1/licenses/lease-status",
     "generate-offline-license": "/v1/licenses/offline",
     "record-usage": "/v1/usage/record",
@@ -19,6 +20,8 @@ CANONICAL_ENDPOINTS = {
     "check-entitlement": "/v1/entitlements/check",
     "authorize": "/v1/access/authorize",
     "mcp-gateway": "/v1/mcp-gateway",
+    "v1-vault-kms": "/v1/vault/keys",
+    "v1-kill-switch": "/v1/kill-switch",
 }
 
 GATEWAY_HOST = "api.licenseflow.dev"
